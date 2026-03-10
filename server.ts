@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import * as XLSX from "xlsx";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -354,6 +355,81 @@ async function startServer() {
       `).all();
     }
     res.json(penalties);
+  });
+
+  app.post("/api/admin/sync-drive", async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: "URL is required" });
+
+      // Extract File ID from Google Drive URL
+      let fileId = "";
+      const match = url.match(/\/d\/(.+?)\//) || url.match(/id=(.+?)(&|$)/);
+      if (match) {
+        fileId = match[1];
+      } else {
+        return res.status(400).json({ error: "Invalid Google Drive URL" });
+      }
+
+      const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+      const response = await fetch(downloadUrl);
+      
+      if (!response.ok) {
+        throw new Error("Failed to download file from Google Drive. Make sure it's shared with 'Anyone with the link'.");
+      }
+
+      const buffer = await response.arrayBuffer();
+      const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      
+      // Sync Players
+      const playersSheet = workbook.Sheets['Jogadores'] || workbook.Sheets[workbook.SheetNames[0]];
+      if (playersSheet) {
+        const playersData = XLSX.utils.sheet_to_json(playersSheet) as any[];
+        const insertPlayer = db.prepare("INSERT OR REPLACE INTO players (id, name, phone, whatsapp, role, password, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        
+        const syncPlayers = db.transaction((list) => {
+          for (const p of list) {
+            insertPlayer.run(
+              p.id || null,
+              p.nome || p.name || "Sem Nome",
+              p.telefone || p.phone || "",
+              p.whatsapp || "",
+              p.cargo || p.role || "member",
+              p.senha || p.password || "123456",
+              p.status || "active"
+            );
+          }
+        });
+        syncPlayers(playersData);
+      }
+
+      // Sync Transactions
+      const transSheet = workbook.Sheets['Transacoes'] || workbook.Sheets['Finanças'] || workbook.Sheets[workbook.SheetNames[1]];
+      if (transSheet) {
+        const transData = XLSX.utils.sheet_to_json(transSheet) as any[];
+        const insertTrans = db.prepare("INSERT OR REPLACE INTO transactions (id, type, category, amount, date, description, player_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        
+        const syncTrans = db.transaction((list) => {
+          for (const t of list) {
+            insertTrans.run(
+              t.id || null,
+              t.tipo || t.type,
+              t.categoria || t.category,
+              t.valor || t.amount,
+              t.data || t.date,
+              t.descricao || t.description || "",
+              t.jogador_id || t.player_id || null
+            );
+          }
+        });
+        syncTrans(transData);
+      }
+
+      res.json({ success: true, message: "Sincronização concluída com sucesso!" });
+    } catch (error) {
+      console.error("[Sync] Error:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
   });
 
   app.post("/api/penalties", (req, res) => {

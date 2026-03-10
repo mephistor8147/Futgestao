@@ -154,6 +154,8 @@ export default function App() {
   const [editingNotification, setEditingNotification] = useState<Notification | null>(null);
   const [showPix, setShowPix] = useState(false);
   const [newPenalty, setNewPenalty] = useState({ player_id: '', reason: '', days: '', date: new Date().toISOString().split('T')[0] });
+  const [driveUrl, setDriveUrl] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -581,10 +583,12 @@ export default function App() {
     }
   };
 
-  const exportToExcel = async () => {
+  const exportFullDatabase = async () => {
     const { utils, writeFile } = await import('xlsx');
     
-    const data = transactions.map(t => ({
+    // Transactions Sheet
+    const transData = transactions.map(t => ({
+      ID: t.id,
       Data: new Date(t.date).toLocaleDateString('pt-BR'),
       Tipo: t.type === 'income' ? 'Entrada' : 'Saída',
       Categoria: t.category,
@@ -593,14 +597,70 @@ export default function App() {
       Descrição: t.description
     }));
 
+    // Players Sheet
+    const playersData = players.map(p => ({
+      ID: p.id,
+      Nome: p.name,
+      Telefone: p.phone,
+      WhatsApp: p.whatsapp,
+      Cargo: p.role,
+      Status: p.status
+    }));
+
+    const wb = utils.book_new();
+    
+    const wsTrans = utils.json_to_sheet(transData);
+    utils.book_append_sheet(wb, wsTrans, "Financeiro");
+    
+    const wsPlayers = utils.json_to_sheet(playersData);
+    utils.book_append_sheet(wb, wsPlayers, "Jogadores");
+
+    writeFile(wb, `Banco_Completo_${settings.app_title}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const exportPlayersToExcel = async () => {
+    const { utils, writeFile } = await import('xlsx');
+    
+    const data = players.map(p => ({
+      ID: p.id,
+      Nome: p.name,
+      Telefone: p.phone,
+      WhatsApp: p.whatsapp,
+      Cargo: p.role,
+      Status: p.status
+    }));
+
     const ws = utils.json_to_sheet(data);
     const wb = utils.book_new();
-    utils.book_append_sheet(wb, ws, "Financeiro");
-    writeFile(wb, `Relatorio_${settings.app_title}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    utils.book_append_sheet(wb, ws, "Jogadores");
+    writeFile(wb, `Lista_Jogadores_${settings.app_title}_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handleDownloadBackup = () => {
     window.location.href = '/api/admin/backup';
+  };
+
+  const handleSyncDrive = async () => {
+    if (!driveUrl) return alert('Insira o link do Google Drive');
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/admin/sync-drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: driveUrl })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(data.message);
+        fetchData();
+      } else {
+        alert('Erro: ' + data.error);
+      }
+    } catch (error) {
+      alert('Erro de conexão');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const filteredPlayers = players.filter(p => 
@@ -1534,53 +1594,96 @@ export default function App() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {(userRole === 'admin' || userRole === 'treasurer') && (
             <button 
               onClick={() => setActiveTab('admin_players')}
-              className="flex items-center justify-center gap-3 bg-blue-600 text-white p-6 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-sm"
+              className="flex flex-col items-center justify-center gap-2 bg-blue-600 text-white p-4 rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-sm text-center"
             >
-              <Users size={24} />
-              Gerenciar Membros
+              <Users size={20} />
+              <span className="text-xs">Gerenciar Membros</span>
             </button>
           )}
           {(userRole === 'admin' || userRole === 'treasurer') && (
             <button 
               onClick={() => setActiveTab('penalties')}
-              className="flex items-center justify-center gap-3 bg-rose-600 text-white p-6 rounded-2xl font-bold hover:bg-rose-700 transition-all shadow-sm"
+              className="flex flex-col items-center justify-center gap-2 bg-rose-600 text-white p-4 rounded-2xl font-bold hover:bg-rose-700 transition-all shadow-sm text-center"
             >
-              <AlertTriangle size={24} />
-              Penalidades
+              <AlertTriangle size={20} />
+              <span className="text-xs">Penalidades</span>
             </button>
           )}
           {(userRole === 'admin' || userRole === 'treasurer') && (
             <button 
               onClick={handleGenerateMonthlyFees}
-              className="flex items-center justify-center gap-3 bg-emerald-600 text-white p-6 rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-sm"
+              className="flex flex-col items-center justify-center gap-2 bg-emerald-600 text-white p-4 rounded-2xl font-bold hover:bg-emerald-700 transition-all shadow-sm text-center"
             >
-              <PlusCircle size={24} />
-              Gerar Mensalidades
+              <PlusCircle size={20} />
+              <span className="text-xs">Gerar Mensalidades</span>
             </button>
           )}
           {(userRole === 'admin' || userRole === 'treasurer') && (
             <button 
-              onClick={exportToExcel}
-              className="flex items-center justify-center gap-3 bg-slate-900 text-white p-6 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-sm"
+              onClick={exportFullDatabase}
+              className="flex flex-col items-center justify-center gap-2 bg-slate-900 text-white p-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-sm text-center"
             >
-              <History size={24} />
-              Exportar Excel
+              <History size={20} />
+              <span className="text-xs">Banco Completo (XLSX)</span>
+            </button>
+          )}
+          {(userRole === 'admin' || userRole === 'treasurer') && (
+            <button 
+              onClick={exportPlayersToExcel}
+              className="flex flex-col items-center justify-center gap-2 bg-indigo-600 text-white p-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-sm text-center"
+            >
+              <Users size={20} />
+              <span className="text-xs">Lista Jogadores (XLSX)</span>
             </button>
           )}
           {userRole === 'admin' && (
             <button 
               onClick={handleDownloadBackup}
-              className="flex items-center justify-center gap-3 bg-amber-600 text-white p-6 rounded-2xl font-bold hover:bg-amber-700 transition-all shadow-sm"
+              className="flex flex-col items-center justify-center gap-2 bg-amber-600 text-white p-4 rounded-2xl font-bold hover:bg-amber-700 transition-all shadow-sm text-center"
             >
-              <Save size={24} />
-              Backup Banco (.db)
+              <Save size={20} />
+              <span className="text-xs">Backup Banco (.db)</span>
             </button>
           )}
         </div>
+
+        {/* Google Drive Sync (Visible to Admin) */}
+        {userRole === 'admin' && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+              <Upload size={20} className="text-blue-600" />
+              Sincronizar com Google Drive
+            </h3>
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1 space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Link Compartilhado do Arquivo Excel</label>
+                <input 
+                  type="text" 
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  placeholder="https://drive.google.com/file/d/..."
+                  value={driveUrl}
+                  onChange={(e) => setDriveUrl(e.target.value)}
+                />
+              </div>
+              <div className="flex items-end">
+                <button 
+                  onClick={handleSyncDrive}
+                  disabled={isSyncing}
+                  className={`w-full md:w-auto px-6 py-2 rounded-xl font-bold text-white transition-all ${isSyncing ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+                >
+                  {isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-3 italic">
+              * O arquivo deve estar compartilhado como "Qualquer pessoa com o link". As abas devem se chamar "Jogadores" e "Transacoes".
+            </p>
+          </div>
+        )}
 
         {/* Financial Entry Form (Visible to Admin and Treasurer) */}
         {(userRole === 'admin' || userRole === 'treasurer') && (
