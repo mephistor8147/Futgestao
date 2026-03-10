@@ -1,0 +1,17 @@
+{
+  "name": "FutGestão",
+  "short_name": "FutGestão",
+  "description": "Gestão de Peladas e Times de Futebol",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#10b981",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/53/53283.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
