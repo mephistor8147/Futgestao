@@ -9,9 +9,15 @@ import * as XLSX from "xlsx";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbPath = path.resolve(__dirname, "football.db");
+// Data directory for persistence (useful for Render/Railway)
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+const dbPath = path.resolve(DATA_DIR, "football.db");
 const db = new Database(dbPath);
-const configPath = path.resolve(__dirname, "config.json");
+const configPath = path.resolve(DATA_DIR, "config.json");
 
 function getConfig() {
   try {

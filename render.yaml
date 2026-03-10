@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: futgestao
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: futgestao-db
+      mountPath: /data
+      sizeGB: 1
