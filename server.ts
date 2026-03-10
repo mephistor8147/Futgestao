@@ -11,6 +11,99 @@ const __dirname = path.dirname(__filename);
 
 const dbPath = path.resolve(__dirname, "football.db");
 const db = new Database(dbPath);
+const configPath = path.resolve(__dirname, "config.json");
+
+function getConfig() {
+  try {
+    const data = fs.readFileSync(configPath, "utf8");
+    return JSON.parse(data);
+  } catch (e) {
+    return {
+      admin_user: "admin",
+      admin_pass: "admin",
+      drive_sync_url: "",
+      sync_interval_minutes: 30
+    };
+  }
+}
+
+async function syncFromDrive() {
+  const config = getConfig();
+  const url = config.drive_sync_url;
+  if (!url) {
+    console.log("[Sync] No Drive URL configured. Skipping sync.");
+    return;
+  }
+
+  try {
+    console.log("[Sync] Starting automatic sync from Drive...");
+    // Extract File ID from Google Drive URL
+    let fileId = "";
+    const match = url.match(/\/d\/(.+?)\//) || url.match(/id=(.+?)(&|$)/);
+    if (match) {
+      fileId = match[1];
+    } else {
+      throw new Error("Invalid Google Drive URL");
+    }
+
+    const downloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    const response = await fetch(downloadUrl);
+    
+    if (!response.ok) {
+      throw new Error("Failed to download file from Google Drive.");
+    }
+
+    const buffer = await response.arrayBuffer();
+    const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+    
+    // Sync Players
+    const playersSheet = workbook.Sheets['Jogadores'] || workbook.Sheets[workbook.SheetNames[0]];
+    if (playersSheet) {
+      const playersData = XLSX.utils.sheet_to_json(playersSheet) as any[];
+      const insertPlayer = db.prepare("INSERT OR REPLACE INTO players (id, name, phone, whatsapp, role, password, status) VALUES (?, ?, ?, ?, ?, ?, ?)");
+      
+      const syncPlayers = db.transaction((list) => {
+        for (const p of list) {
+          insertPlayer.run(
+            p.id || null,
+            p.nome || p.name || "Sem Nome",
+            p.telefone || p.phone || "",
+            p.whatsapp || "",
+            p.cargo || p.role || "member",
+            p.senha || p.password || "123456",
+            p.status || "active"
+          );
+        }
+      });
+      syncPlayers(playersData);
+    }
+
+    // Sync Transactions
+    const transSheet = workbook.Sheets['Transacoes'] || workbook.Sheets['Finanças'] || workbook.Sheets[workbook.SheetNames[1]];
+    if (transSheet) {
+      const transData = XLSX.utils.sheet_to_json(transSheet) as any[];
+      const insertTrans = db.prepare("INSERT OR REPLACE INTO transactions (id, type, category, amount, date, description, player_id) VALUES (?, ?, ?, ?, ?, ?, ?)");
+      
+      const syncTrans = db.transaction((list) => {
+        for (const t of list) {
+          insertTrans.run(
+            t.id || null,
+            t.tipo || t.type,
+            t.categoria || t.category,
+            t.valor || t.amount,
+            t.data || t.date,
+            t.descricao || t.description || "",
+            t.jogador_id || t.player_id || null
+          );
+        }
+      });
+      syncTrans(transData);
+    }
+    console.log("[Sync] Automatic sync completed successfully.");
+  } catch (error) {
+    console.error("[Sync] Automatic sync failed:", (error as Error).message);
+  }
+}
 
 // Initialize database
 db.exec(`
@@ -102,6 +195,22 @@ async function startServer() {
 
   const PORT = Number(process.env.PORT) || 3000;
 
+  app.post("/api/admin/config", (req, res) => {
+    try {
+      const newConfig = req.body;
+      const currentConfig = getConfig();
+      const updatedConfig = { ...currentConfig, ...newConfig };
+      fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2));
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/admin/config", (req, res) => {
+    res.json(getConfig());
+  });
+
   // Settings API
   app.get("/api/settings", (req, res) => {
     const settings = db.prepare("SELECT * FROM settings").all() as {key: string, value: string}[];
@@ -151,10 +260,10 @@ async function startServer() {
   // Login API
   app.post("/api/login", (req, res) => {
     const { username, password } = req.body;
+    const config = getConfig();
     
-    // Check Admin
-    const adminPass = db.prepare("SELECT value FROM settings WHERE key = 'admin_password'").get() as any;
-    if (username === 'admin' && password === (adminPass?.value || 'admin')) {
+    // Check Admin from config file
+    if (username === config.admin_user && password === config.admin_pass) {
       return res.json({ success: true, role: 'admin' });
     }
 
@@ -482,6 +591,14 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV}`);
+    
+    // Initial sync
+    syncFromDrive();
+    
+    // Setup periodic sync
+    const config = getConfig();
+    const interval = (config.sync_interval_minutes || 30) * 60 * 1000;
+    setInterval(syncFromDrive, interval);
   });
 }
 

@@ -156,6 +156,7 @@ export default function App() {
   const [newPenalty, setNewPenalty] = useState({ player_id: '', reason: '', days: '', date: new Date().toISOString().split('T')[0] });
   const [driveUrl, setDriveUrl] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [systemConfig, setSystemConfig] = useState({ admin_user: '', admin_pass: '', drive_sync_url: '', sync_interval_minutes: 30 });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -173,13 +174,14 @@ export default function App() {
       const tUrl = playerId ? `/api/transactions?playerId=${playerId}` : '/api/transactions';
       const penUrl = playerId ? `/api/penalties?playerId=${playerId}` : '/api/penalties';
       
-      const [pRes, tRes, sRes, setRes, nRes, penRes] = await Promise.all([
+      const [pRes, tRes, sRes, setRes, nRes, penRes, configRes] = await Promise.all([
         fetch(pUrl),
         fetch(tUrl),
         fetch('/api/summary'),
         fetch('/api/settings'),
         fetch('/api/notifications'),
-        fetch(penUrl)
+        fetch(penUrl),
+        fetch('/api/admin/config')
       ]);
       const pData = await pRes.json();
       const tData = await tRes.json();
@@ -187,6 +189,7 @@ export default function App() {
       const setData = await setRes.json();
       const nData = await nRes.json();
       const penData = await penRes.json();
+      const configData = await configRes.json();
       
       setPlayers(pData);
       setTransactions(tData);
@@ -194,6 +197,8 @@ export default function App() {
       setSettings(setData);
       setNotifications(nData);
       setPenalties(penData);
+      setSystemConfig(configData);
+      setDriveUrl(configData.drive_sync_url);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {
@@ -660,6 +665,23 @@ export default function App() {
       alert('Erro de conexão');
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleUpdateSystemConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(systemConfig)
+      });
+      if (res.ok) {
+        alert('Configurações do sistema salvas!');
+        fetchData();
+      }
+    } catch (error) {
+      alert('Erro ao salvar configurações');
     }
   };
 
@@ -1653,35 +1675,87 @@ export default function App() {
 
         {/* Google Drive Sync (Visible to Admin) */}
         {userRole === 'admin' && (
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-            <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
-              <Upload size={20} className="text-blue-600" />
-              Sincronizar com Google Drive
-            </h3>
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1 space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase">Link Compartilhado do Arquivo Excel</label>
-                <input 
-                  type="text" 
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  placeholder="https://drive.google.com/file/d/..."
-                  value={driveUrl}
-                  onChange={(e) => setDriveUrl(e.target.value)}
-                />
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+              <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                <Upload size={20} className="text-blue-600" />
+                Sincronizar com Google Drive
+              </h3>
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex-1 space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Link Compartilhado do Arquivo Excel</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    placeholder="https://drive.google.com/file/d/..."
+                    value={driveUrl}
+                    onChange={(e) => {
+                      setDriveUrl(e.target.value);
+                      setSystemConfig({ ...systemConfig, drive_sync_url: e.target.value });
+                    }}
+                  />
+                </div>
+                <div className="flex items-end gap-2">
+                  <button 
+                    onClick={handleSyncDrive}
+                    disabled={isSyncing}
+                    className={`px-6 py-2 rounded-xl font-bold text-white transition-all ${isSyncing ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+                  >
+                    {isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}
+                  </button>
+                  <button 
+                    onClick={handleUpdateSystemConfig}
+                    className="px-6 py-2 rounded-xl font-bold bg-slate-900 text-white hover:bg-slate-800 transition-all"
+                  >
+                    Salvar Link
+                  </button>
+                </div>
               </div>
-              <div className="flex items-end">
-                <button 
-                  onClick={handleSyncDrive}
-                  disabled={isSyncing}
-                  className={`w-full md:w-auto px-6 py-2 rounded-xl font-bold text-white transition-all ${isSyncing ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'}`}
-                >
-                  {isSyncing ? 'Sincronizando...' : 'Sincronizar Agora'}
-                </button>
-              </div>
+              <p className="text-[10px] text-slate-400 mt-3 italic">
+                * O arquivo deve estar compartilhado como "Qualquer pessoa com o link". As abas devem se chamar "Jogadores" e "Transacoes".
+              </p>
             </div>
-            <p className="text-[10px] text-slate-400 mt-3 italic">
-              * O arquivo deve estar compartilhado como "Qualquer pessoa com o link". As abas devem se chamar "Jogadores" e "Transacoes".
-            </p>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+              <h3 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                <Settings size={20} className="text-slate-600" />
+                Configurações do Sistema (Arquivo config.json)
+              </h3>
+              <form onSubmit={handleUpdateSystemConfig} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Usuário Admin</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                    value={systemConfig.admin_user}
+                    onChange={(e) => setSystemConfig({ ...systemConfig, admin_user: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Senha Admin</label>
+                  <input 
+                    type="password" 
+                    className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                    value={systemConfig.admin_pass}
+                    onChange={(e) => setSystemConfig({ ...systemConfig, admin_pass: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Intervalo de Sincronização (min)</label>
+                  <input 
+                    type="number" 
+                    className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                    value={systemConfig.sync_interval_minutes}
+                    onChange={(e) => setSystemConfig({ ...systemConfig, sync_interval_minutes: parseInt(e.target.value) })}
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <button type="submit" className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-colors">
+                    Salvar Credenciais e Intervalo
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
 
